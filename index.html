@@ -659,8 +659,9 @@
 
     <script>
       // --- 全域變數與設定 ---
+      // const BACKEND_URL = "http://localhost:9000";
       const BACKEND_URL =
-        "https://baseball-0623-backend-411884714629.us-central1.run.app";
+        "https://baseball-backend-166925943182.us-central1.run.app";
       let allHistoryData = [],
         currentRecord = null,
         benchmarkProfiles = {};
@@ -769,13 +770,13 @@
             : "N/A"
         }</p></div></div>`;
         html += `<div><h4 class="font-bold text-lg text-indigo-700 border-b pb-2 mb-3">模型預測總覽</h4><div class="grid grid-cols-2 gap-x-4 gap-y-2"><p class="font-semibold text-gray-600">最大球速:</p><p>${
-          record.max_speed_kmh
+          record.max_speed_kmh != null
             ? record.max_speed_kmh.toFixed(1) + " km/h"
             : "N/A"
         }</p><p class="font-semibold text-gray-600">動作品質分數:</p><p>${
-          record.pose_score !== null ? record.pose_score : "N/A"
+          record.pose_score != null ? record.pose_score : "N/A"
         }</p><p class="font-semibold text-gray-600">好球機率:</p><p>${
-          record.ball_score !== null
+          record.ball_score != null
             ? (record.ball_score * 100).toFixed(0) + "%"
             : "N/A"
         }</p></div></div>`;
@@ -979,17 +980,19 @@
         const predictions = record.predictions || record;
 
         $("#max-speed-kmh").text(
-          predictions.max_speed_kmh
+          predictions.max_speed_kmh != null
             ? predictions.max_speed_kmh.toFixed(1)
             : "N/A"
         );
         $("#ball-score-display").text(
-          predictions.ball_score !== null
+          predictions.ball_score != null
             ? `${(predictions.ball_score * 100).toFixed(0)}%`
             : "N/A"
         );
         $("#ball-score-raw").text(
-          `模型判定: ${predictions.ball_score > 0.5 ? "好球" : "壞球"}`
+          predictions.ball_score != null
+            ? `模型判定: ${predictions.ball_score > 0.5 ? "好球" : "壞球"}`
+            : "模型判定"
         );
 
         const poseScore = predictions.pose_score;
@@ -1002,7 +1005,7 @@
             .addClass("text-2xl");
         } else {
           $("#pose-score")
-            .text(poseScore !== null ? poseScore : "N/A")
+            .text(poseScore != null ? poseScore : "N/A")
             .removeClass("text-2xl")
             .addClass("text-5xl");
         }
@@ -1132,7 +1135,7 @@
           .getContext("2d");
         const values = records
           .map((r) => getNestedValue(r, `biomechanics_features.${featureKey}`))
-          .filter((v) => v !== undefined && v !== null);
+          .filter((v) => v != null); // Use != to catch null and undefined
         if (values.length < 2) {
           ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
           ctx.font = '16px "Inter", sans-serif';
@@ -1194,19 +1197,37 @@
       function drawTimeSeriesChart(records, metric) {
         if (timeSeriesChartInstance) timeSeriesChartInstance.destroy();
         const ctx = document.getElementById("timeSeriesChart").getContext("2d");
-        const data = records
+
+        // Filter for valid data points
+        const validData = records
           .map((r) => ({
             x: new Date(r.created_at),
             y: getNestedValue(r, metric.key),
           }))
+          .filter((d) => d.y != null) // Use != to catch both null and undefined
           .sort((a, b) => a.x - b.x);
+
+        // Check for data sufficiency
+        if (validData.length < 1) {
+          ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+          ctx.font = '16px "Inter", sans-serif';
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#6b7280";
+          ctx.fillText(
+            "沒有足夠的數據點來繪製趨勢圖",
+            ctx.canvas.width / 2,
+            ctx.canvas.height / 2
+          );
+          return;
+        }
+
         timeSeriesChartInstance = new Chart(ctx, {
           type: "line",
           data: {
             datasets: [
               {
                 label: metric.name,
-                data: data,
+                data: validData,
                 borderColor: "rgba(239, 68, 68, 1)",
                 tension: 0.1,
               },
@@ -1234,8 +1255,32 @@
         currentId
       ) {
         if (correlationChartInstance) correlationChartInstance.destroy();
+        const ctx = document
+          .getElementById("correlationExplorerChart")
+          .getContext("2d");
 
-        const otherData = records
+        // Filter records to only include those with valid data for BOTH axes
+        const validRecords = records.filter((r) => {
+          const xVal = getNestedValue(r, metricX.key);
+          const yVal = getNestedValue(r, metricY.key);
+          return xVal != null && yVal != null;
+        });
+
+        // Check if there is enough data to plot
+        if (validRecords.length < 1) {
+          ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+          ctx.font = '16px "Inter", sans-serif';
+          ctx.textAlign = "center";
+          ctx.fillStyle = "#6b7280";
+          ctx.fillText(
+            "沒有足夠的數據點來繪製關聯圖",
+            ctx.canvas.width / 2,
+            ctx.canvas.height / 2
+          );
+          return;
+        }
+
+        const otherData = validRecords
           .filter((r) => r.id !== currentId)
           .map((r) => ({
             x: getNestedValue(r, metricX.key),
@@ -1243,7 +1288,7 @@
             recordId: r.id,
           }));
 
-        const currentPoint = records.find((r) => r.id === currentId);
+        const currentPoint = validRecords.find((r) => r.id === currentId);
         const currentData = currentPoint
           ? [
               {
@@ -1254,9 +1299,6 @@
             ]
           : [];
 
-        const ctx = document
-          .getElementById("correlationExplorerChart")
-          .getContext("2d");
         correlationChartInstance = new Chart(ctx, {
           type: "scatter",
           data: {
@@ -1342,7 +1384,6 @@
 
         for (let i = 0; i < metrics.length; i++) {
           for (let j = 0; j < metrics.length; j++) {
-            // Calculate for the full matrix
             const aligned1 = [],
               aligned2 = [];
             for (let k = 0; k < records.length; k++) {
@@ -1376,7 +1417,7 @@
       function drawCorrelationHeatmap(records) {
         const container = $("#correlationTableContainer");
         const messageEl = $("#heatmap-message");
-        container.empty(); // Clear previous table
+        container.empty();
 
         if (records.length < 2) {
           container.hide();
@@ -1398,25 +1439,22 @@
         const thead = $("<thead></thead>");
         const tbody = $("<tbody></tbody>");
 
-        // Header Row
         const headerRow = $("<tr></tr>");
-        headerRow.append('<th class="corner"></th>'); // Top-left corner
+        headerRow.append('<th class="corner"></th>');
         labels.forEach((label) => {
           headerRow.append(`<th>${label}</th>`);
         });
         thead.append(headerRow);
 
-        // Body Rows
         labels.forEach((rowLabel, i) => {
           const row = $("<tr></tr>");
-          row.append(`<th class="row-header">${rowLabel}</th>`); // Row header
+          row.append(`<th class="row-header">${rowLabel}</th>`);
           labels.forEach((colLabel, j) => {
             const value = matrix[i][j];
             const cell = $("<td></td>");
             cell.text(isNaN(value) ? "N/A" : value.toFixed(2));
             const bgColor = getCorrelationColor(value);
             cell.css("background-color", bgColor);
-            // Set text color for contrast
             if (!isNaN(value) && Math.abs(value) > 0.4) {
               cell.css("color", "white");
             }
@@ -1462,7 +1500,7 @@
         const calcAverage = (data, key) => {
           const values = data
             .map((r) => r.biomechanics_features[key])
-            .filter((v) => v !== null && v !== undefined);
+            .filter((v) => v != null);
           if (values.length === 0) return NaN;
           return values.reduce((a, b) => a + b, 0) / values.length;
         };
@@ -1567,18 +1605,19 @@
         });
 
         $("#benchmark-model-select").on("change", function () {
-          if (!currentRecord) {
-            $(this).val("");
-            alert("請先分析或回放一筆紀錄，才能選擇比對標竿。");
-            return;
+          if (currentRecord) {
+            const selectedModelName = $(this).val();
+            const eliteProfile = benchmarkProfiles[selectedModelName];
+            if (eliteProfile) {
+              renderComparisonBlock(
+                eliteProfile,
+                currentRecord.biomechanics_features,
+                $("#elite-comparison-block")
+              );
+            } else {
+              $("#elite-comparison-block").empty();
+            }
           }
-          const selectedModelName = $(this).val();
-          const eliteProfile = benchmarkProfiles[selectedModelName];
-          renderComparisonBlock(
-            eliteProfile,
-            currentRecord.biomechanics_features,
-            $("#elite-comparison-block")
-          );
         });
 
         $("#compare-user-average").on("change", function () {
@@ -1629,7 +1668,6 @@
           $("#corr-x-axis").val(JSON.stringify(chartMetrics[0]));
           $("#corr-y-axis").val(JSON.stringify(chartMetrics[2]));
 
-          // 繪製圖表
           drawTimeSeriesChart(records, chartMetrics[0]);
           drawCorrelationExplorerChart(
             records,
@@ -1640,13 +1678,14 @@
 
           const selectedDensityMetric = $("#history-density-selector").val();
           if (selectedDensityMetric) {
+            const currentValue = getNestedValue(
+              currentRecord,
+              `biomechanics_features.${selectedDensityMetric}`
+            );
             drawBiomechanicsHistoryDensityChart(
               records,
               selectedDensityMetric,
-              getNestedValue(
-                currentRecord,
-                `biomechanics_features.${selectedDensityMetric}`
-              )
+              currentValue
             );
           }
 
@@ -1690,11 +1729,11 @@
             );
           } else if (id === "history-density-selector") {
             const key = $("#history-density-selector").val();
-            drawBiomechanicsHistoryDensityChart(
-              records,
-              key,
-              getNestedValue(currentRecord, `biomechanics_features.${key}`)
+            const currentValue = getNestedValue(
+              currentRecord,
+              `biomechanics_features.${key}`
             );
+            drawBiomechanicsHistoryDensityChart(records, key, currentValue);
           }
         };
 
